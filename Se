@@ -1,0 +1,542 @@
+local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = workspace
+local RunService = game:GetService("RunService")
+local Player = Players.LocalPlayer
+local place = game.PlaceId
+local player = game.Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local hrp = character:WaitForChild("HumanoidRootPart")
+
+-- 파일 경로 설정
+local VISITED_SERVERS_FILE = "visited_servers.txt"
+local maxVisitedServers = 7
+
+-- 파일 시스템 함수들 (익스큐터 환경용)
+local function LoadVisitedServers()
+    local visitedServers = {}
+    if isfile and readfile and isfile(VISITED_SERVERS_FILE) then
+        local success, content = pcall(function()
+            return readfile(VISITED_SERVERS_FILE)
+        end)
+        
+        if success and content then
+            -- 줄바꿈으로 분리하여 JobId들을 로드
+            for jobId in content:gmatch("[^\r\n]+") do
+                if jobId and jobId ~= "" then
+                    table.insert(visitedServers, jobId)
+                end
+            end
+            print("📁 파일에서 방문한 서버", #visitedServers, "개 로드됨")
+        else
+            print("📁 방문한 서버 파일 읽기 실패 또는 빈 파일")
+        end
+    else
+        print("📁 방문한 서버 파일이 없거나 파일 시스템 함수 미지원")
+    end
+    return visitedServers
+end
+
+local function SaveVisitedServers(visitedServers)
+    if writefile then
+        local success, err = pcall(function()
+            local content = table.concat(visitedServers, "\n")
+            writefile(VISITED_SERVERS_FILE, content)
+        end)
+        
+        if success then
+            print("💾 방문한 서버", #visitedServers, "개 파일에 저장됨")
+        else
+            warn("💾 파일 저장 실패:", err)
+        end
+    else
+        warn("💾 writefile 함수를 사용할 수 없습니다")
+    end
+end
+
+-- 방문한 서버 목록 로드
+local visitedServers = LoadVisitedServers()
+
+-- 방문한 서버 관리 함수 (성공시에만 호출됨)
+local function AddVisitedServer(jobId)
+    -- 이미 존재하는지 확인하고 제거
+    for i = #visitedServers, 1, -1 do
+        if visitedServers[i] == jobId then
+            table.remove(visitedServers, i)
+            break
+        end
+    end
+    
+    -- 맨 앞에 추가
+    table.insert(visitedServers, 1, jobId)
+    
+    -- 최대 개수 초과시 제거
+    if #visitedServers > maxVisitedServers then
+        table.remove(visitedServers) -- 마지막 요소 제거
+    end
+    
+    -- 파일에 저장
+    SaveVisitedServers(visitedServers)
+    
+    print("📝 서버 기록:", jobId, "(총", #visitedServers, "개 서버 기록됨)")
+end
+
+local function IsVisitedServer(jobId)
+    for _, id in ipairs(visitedServers) do
+        if id == jobId then
+            return true
+        end
+    end
+    return false
+end
+
+-- Lost Connection 방지 (wait 제거)
+local function PreventLostConnection()
+    TeleportService.TeleportInitFailed:Connect(function(player, teleportResult, errorMessage)
+        warn("텔레포트 초기화 실패:", teleportResult, errorMessage)
+    end)
+    game:GetService("GuiService").ErrorMessageChanged:Connect(function() end)
+    game:GetService("NetworkClient").ChildRemoved:Connect(function()
+        warn("네트워크 연결 끊어짐 감지")
+    end)
+end
+PreventLostConnection()
+
+-- 캐릭터 준비 대기
+local function WaitForCharacter()
+    if not Player.Character or not Player.Character:FindFirstChild("HumanoidRootPart") then
+        Player.CharacterAdded:Wait()
+        repeat task.wait(0.17) until Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+    end
+end
+
+-- 안전한 서버 호출
+local function SafeInvoke(funcName, args)
+    if type(args) ~= "table" then args = {args} end
+    local success, result = pcall(function()
+        WaitForCharacter()
+        return ReplicatedStorage:WaitForChild("Chest"):WaitForChild("Remotes")
+            :WaitForChild("Functions"):WaitForChild(funcName)
+            :InvokeServer(unpack(args))
+    end)
+    if not success then warn("InvokeServer 오류:", funcName, result) end
+    return success
+end
+
+-- Tashi Blade 장착
+local function EnsureTashiBlade()
+    WaitForCharacter()
+    local args = {"Gold Spear"}
+    SafeInvoke("InventoryEq", args)
+end
+
+-- SeaMonsterSpawnText 시간 파싱 함수
+local function ParseSeaMonsterTime()
+    local success, seaMonsterText = pcall(function()
+        return ReplicatedStorage:GetAttribute("SeaMonsterSpawnText") or "00:00:00"
+    end)
+    
+    if not success then return 0 end
+    
+    local hours, minutes, seconds = string.match(seaMonsterText, "(%d+):(%d+):(%d+)")
+    if hours and minutes and seconds then
+        return tonumber(hours) * 3600 + tonumber(minutes) * 60 + tonumber(seconds)
+    end
+    return 0
+end
+
+-- HydraSeaKing Body 찾기 및 텔레포트
+local function TeleportToHydraSeaKingBody()
+    WaitForCharacter()
+    local hydraBody = Workspace:FindFirstChild("SeaMonster")
+        and workspace.SeaMonster:FindFirstChild("HydraSeaKing")
+        and Workspace.SeaMonster.HydraSeaKing:FindFirstChild("Body")
+    
+    if hydraBody then
+        local targetPos = hydraBody.Position
+        local targetCFrame = hydraBody.CFrame 
+        hrp.CFrame = CFrame.lookAt(hrp.Position, targetPos)
+        hrp.CFrame = hrp.CFrame + hrp.CFrame.LookVector * 30
+        Player.Character.HumanoidRootPart.CFrame = targetCFrame
+        SafeInvoke("SkillAction", {"SW_Gold Spear_M1"})
+        pcall(function()
+            SafeInvoke("SkillAction", {"SW_Gold Spear_Z", {MouseHit = hydraBody.CFrame, Type = "Up"}})
+            SafeInvoke("SkillAction", {"SW_Gold Spear_Z", {MouseHit = hydraBody.CFrame, Type = "Down"}})
+            SafeInvoke("SkillAction", {"SW_Gold Spear_X", {MouseHit = hydraBody.CFrame, Type = "Up"}})
+            SafeInvoke("SkillAction", {"SW_Gold Spear_X", {MouseHit = hydraBody.CFrame, Type = "Down"}})
+        end)
+        return true
+    end
+    return false
+end
+
+-- 이동 함수들
+local function TeleportToChest()
+    WaitForCharacter()
+    local island = Workspace:FindFirstChild("Island")
+    if island then
+        local chestSpawner = island:FindFirstChild("ChestSpawner", true)
+        if chestSpawner then
+            Player.Character.HumanoidRootPart.CFrame = chestSpawner.CFrame
+            return true
+        end
+    end
+    return false
+end
+
+local function TeleportToSeaKingBody()
+    WaitForCharacter()
+    local body = Workspace:FindFirstChild("SeaMonster")
+        and Workspace.SeaMonster:FindFirstChild("SeaKing")
+        and Workspace.SeaMonster.SeaKing:FindFirstChild("SeaKing")
+        and Workspace.SeaMonster.SeaKing.SeaKing:FindFirstChild("Body")
+        
+    if body then
+        local targetCFrame = body.CFrame 
+        Player.Character.HumanoidRootPart.CFrame = targetCFrame
+        -- model 변수를 안전하게 처리
+        local model = Workspace:FindFirstChild("SeaMonster")
+            and Workspace.SeaMonster:FindFirstChild("SeaKing")
+            and Workspace.SeaMonster.SeaKing:FindFirstChild("SeaKing")
+        
+        if model then
+            local targetPos = model:GetModelCFrame().Position
+            hrp.CFrame = CFrame.lookAt(hrp.Position, targetPos)
+            hrp.CFrame = hrp.CFrame + hrp.CFrame.LookVector * 30
+        end
+        
+        SafeInvoke("SkillAction", {"SW_Gold Spear_M1"})
+        pcall(function()
+            SafeInvoke("SkillAction", {"SW_Gold Spear_Z", {MouseHit = body.CFrame, Type = "Up"}})
+            SafeInvoke("SkillAction", {"SW_Gold Spear_Z", {MouseHit = body.CFrame, Type = "Down"}})
+            SafeInvoke("SkillAction", {"SW_Gold Spear_X", {MouseHit = body.CFrame, Type = "Up"}})
+            SafeInvoke("SkillAction", {"SW_Gold Spear_X", {MouseHit = body.CFrame, Type = "Down"}})
+        end)
+        return true
+    end
+    return false
+end
+
+local function TeleportToSeaKingWater()
+    WaitForCharacter()
+    local island = Workspace:FindFirstChild("Island")
+    if island then
+        local water = island:FindFirstChild("Sea King Water", true)
+        if water and water:FindFirstChild("RootPart") then
+            Player.Character.HumanoidRootPart.CFrame = water.RootPart.CFrame
+            return true
+        end
+    end
+    return false
+end
+
+-- 게임 입장
+SafeInvoke("EtcFunction", {"EnterTheGame", {}})
+
+-- 텔레포트 성공 감지 함수
+local function DetectTeleportSuccess()
+    -- 현재 JobId를 기록 (새 서버에 도착했을 때 저장하기 위함)
+    local currentJobId = game.JobId
+    
+    -- 스크립트가 처음 실행될 때와 새 서버에 도착했을 때를 구분
+    -- 파일에서 로드한 서버 목록에 현재 JobId가 없으면 새 서버에 성공적으로 접속한 것
+    local isNewServer = not IsVisitedServer(currentJobId)
+    
+    if isNewServer then
+        print("✅ 새 서버 접속 성공! JobId:", currentJobId)
+        AddVisitedServer(currentJobId)
+    else
+        print("🔄 기존 서버 또는 이미 기록된 서버:", currentJobId)
+    end
+end
+
+-- 서버 접속 성공 시 기록
+DetectTeleportSuccess()
+
+-- 상태 추적 변수들 (디버그 변수 추가)
+local lastChestTime, lastBodyTime, lastRootTime, lastHydraBodyTime = 0,0,0,0
+local serverHopPaused = false
+local hydraBodyDisappearedTime = 0
+local bodyDisappearedTime = 0
+local isWaitingForChestAfterBody = false
+local isWaitingForRootAfterHydra = false
+local lastDebugTime = 0
+
+-- RunService 연결 해제를 위한 변수
+local teleportConnection
+
+-- 서버홉 조건 함수 (Body 사라진 후 10초 대기)
+local function ShouldHopServer()
+    WaitForCharacter()
+    
+    -- SeaMonsterSpawnText 체크
+    local remainingTime = ParseSeaMonsterTime()
+    
+    -- 59초 이하면 서버홉 일시정지 (단, Body 대기 상태가 아닐 때만)
+    if remainingTime > 0 and remainingTime <= 59 and not isWaitingForChestAfterBody and not isWaitingForRootAfterHydra then
+        if not serverHopPaused then
+            print("⏳ SeaMonster 스폰까지 " .. remainingTime .. "초 남음. 서버홉 일시정지.")
+            serverHopPaused = true
+        end
+        return false
+    end
+    
+    local island = Workspace:FindFirstChild("Island")
+    local chestExists = island and island:FindFirstChild("ChestSpawner", true)
+    local waterExists = island and island:FindFirstChild("Sea King Water", true) and island["Sea King Water"]:FindFirstChild("RootPart")
+    local bodyExists = Workspace:FindFirstChild("SeaMonster")
+        and Workspace.SeaMonster:FindFirstChild("SeaKing")
+        and Workspace.SeaMonster.SeaKing:FindFirstChild("SeaKing")
+        and Workspace.SeaMonster.SeaKing.SeaKing:FindFirstChild("Body")
+    
+    -- HydraSeaKing Body 존재 확인
+    local hydraBodyExists = Workspace:FindFirstChild("SeaMonster")
+        and Workspace.SeaMonster:FindFirstChild("HydraSeaKing")
+        and Workspace.SeaMonster.HydraSeaKing:FindFirstChild("Body")
+    
+    local now = tick()
+
+    -- 🔍 현재 상태 디버그 출력 (10초마다)
+    if not lastDebugTime or now - lastDebugTime >= 10 then
+        print("🔍 [DEBUG] 현재 상태:")
+        print("  - remainingTime:", remainingTime)
+        print("  - serverHopPaused:", serverHopPaused)
+        print("  - chestExists:", chestExists and "YES" or "NO")
+        print("  - bodyExists:", bodyExists and "YES" or "NO")
+        print("  - hydraBodyExists:", hydraBodyExists and "YES" or "NO")
+        print("  - waterExists:", waterExists and "YES" or "NO")
+        print("  - isWaitingForChestAfterBody:", isWaitingForChestAfterBody and "YES" or "NO")
+        print("  - isWaitingForRootAfterHydra:", isWaitingForRootAfterHydra and "YES" or "NO")
+        if bodyDisappearedTime > 0 then
+            print("  - bodyDisappearedTime 경과:", now - bodyDisappearedTime, "초")
+        end
+        if hydraBodyDisappearedTime > 0 then
+            print("  - hydraBodyDisappearedTime 경과:", now - hydraBodyDisappearedTime, "초")
+        end
+        lastDebugTime = now
+    end
+
+    -- 🔥 우선순위 1: HydraSeaKing Body 대기 상태 처리 (serverHopPaused 무시)
+    if isWaitingForRootAfterHydra then
+        print("🐍 [HYDRA WAITING] 대기 중... 경과시간:", hydraBodyDisappearedTime > 0 and (now - hydraBodyDisappearedTime) or 0, "초")
+        if hydraBodyDisappearedTime > 0 and now - hydraBodyDisappearedTime >= 10 then
+            print("⏰ [HYDRA HOP] HydraSeaKing Body 사라진지 10초 경과, 서버홉 실행!")
+            hydraBodyDisappearedTime = 0
+            lastHydraBodyTime = 0
+            isWaitingForRootAfterHydra = false
+            serverHopPaused = false  -- 서버홉 실행 시 일시정지 해제
+            return true
+        end
+        return false
+    end
+
+    -- 🔥 우선순위 2: SeaKing Body 대기 상태 처리 (serverHopPaused 무시)
+    if isWaitingForChestAfterBody then
+        print("👹 [BODY WAITING] 대기 중... 경과시간:", bodyDisappearedTime > 0 and (now - bodyDisappearedTime) or 0, "초")
+        if bodyDisappearedTime > 0 and now - bodyDisappearedTime >= 10 then
+            print("⏰ [BODY HOP] SeaKing Body 사라진지 10초 경과, 서버홉 실행!")
+            bodyDisappearedTime = 0
+            lastBodyTime = 0
+            isWaitingForChestAfterBody = false
+            serverHopPaused = false  -- 서버홉 실행 시 일시정지 해제
+            return true
+        end
+        return false
+    end
+
+    -- HydraSeaKing Body 처리
+    if hydraBodyExists then
+        if lastHydraBodyTime == 0 then
+            print("🐍 [HYDRA FOUND] HydraSeaKing Body 발견!")
+        end
+        lastHydraBodyTime = now
+        hydraBodyDisappearedTime = 0
+        isWaitingForRootAfterHydra = false
+        return false
+    elseif lastHydraBodyTime > 0 and hydraBodyDisappearedTime == 0 then
+        hydraBodyDisappearedTime = now
+        isWaitingForRootAfterHydra = true
+        print("🐍 [HYDRA DISAPPEARED] HydraSeaKing Body 사라짐 감지! RootPart로 텔포 후 10초 후 서버홉 예정")
+        return false
+    end
+
+    -- SeaKing Body 처리
+    if bodyExists then
+        if lastBodyTime == 0 then
+            print("👹 [BODY FOUND] SeaKing Body 발견!")
+        end
+        lastBodyTime = now
+        bodyDisappearedTime = 0
+        isWaitingForChestAfterBody = false
+        return false
+    elseif lastBodyTime > 0 and bodyDisappearedTime == 0 then
+        bodyDisappearedTime = now
+        isWaitingForChestAfterBody = true
+        print("👹 [BODY DISAPPEARED] SeaKing Body 사라짐 감지! Chest로 텔포 후 10초 후 서버홉 예정")
+        return false
+    end
+
+    -- 서버홉이 일시정지된 상태이고, Body 관련 대기 상태도 아니라면 서버홉 안 함
+    if serverHopPaused then
+        return false
+    end
+
+    -- Chest만 있는 경우 (Body 대기 상태가 아닐 때만)
+    if chestExists and not bodyExists and not isWaitingForChestAfterBody then
+        if lastChestTime == 0 then 
+            print("📦 [CHEST ONLY] Chest만 존재, 10초 타이머 시작")
+            lastChestTime = now 
+        end
+        if now - lastChestTime >= 10 then 
+            print("📦 [CHEST HOP] Chest 10초 경과, 서버홉 실행!")
+            lastChestTime = 0 
+            return true 
+        end
+        return false
+    elseif not chestExists then
+        if lastChestTime > 0 then
+            print("📦 [CHEST GONE] Chest 사라짐, 타이머 리셋")
+        end
+        lastChestTime = 0
+    end
+
+    -- RootPart만 있는 경우 (HydraBody 대기 상태가 아닐 때만)
+    if waterExists and not hydraBodyExists and not isWaitingForRootAfterHydra then
+        if lastRootTime == 0 then 
+            print("💧 [ROOT ONLY] RootPart만 존재, 10초 타이머 시작")
+            lastRootTime = now 
+        end
+        if now - lastRootTime >= 10 then 
+            print("💧 [ROOT HOP] RootPart 10초 경과, 서버홉 실행!")
+            lastRootTime = 0 
+            return true 
+        end
+        return false
+    elseif not waterExists then
+        if lastRootTime > 0 then
+            print("💧 [ROOT GONE] RootPart 사라짐, 타이머 리셋")
+        end
+        lastRootTime = 0
+    end
+
+    -- 모든 것이 없으면 즉시 서버홉
+    if not chestExists and not bodyExists and not waterExists and not hydraBodyExists then
+        print("🚫 [NOTHING] 모든 오브젝트 없음, 즉시 서버홉!")
+        return true
+    end
+
+    return false
+end
+
+-- 개선된 이동 루프 (우선순위 기반)
+local function UpdatedTeleportLoop()
+    if teleportConnection then
+        teleportConnection:Disconnect()
+    end
+    
+    teleportConnection = RunService.RenderStepped:Connect(function()
+        if TeleportToHydraSeaKingBody() then
+            return
+        end
+        
+        if TeleportToSeaKingBody() then
+            return
+        end
+        
+        if isWaitingForChestAfterBody and TeleportToChest() then
+            return
+        end
+        
+        if isWaitingForRootAfterHydra and TeleportToSeaKingWater() then
+            return
+        end
+        
+        if TeleportToChest() then
+            return
+        end
+        
+        TeleportToSeaKingWater()
+    end)
+end
+
+-- 서버 목록 기반 무한 서버 텔레포트 (파일 기반 중복 방지)
+local GetServersFunction = ReplicatedStorage:WaitForChild("Chest"):WaitForChild("Remotes")
+    :WaitForChild("Functions"):WaitForChild("GetServers")
+local currentJobId = game.JobId
+
+print("🔎 서버 조건 기반 무한 서버홉 시작 (파일 기반 중복 방지)")
+print("📁 현재 방문한 서버 목록:", table.concat(visitedServers, ", "))
+
+-- 이동 루프 시작
+UpdatedTeleportLoop()
+
+while true do
+    if ShouldHopServer() then
+        local attemptedJobIds = {}
+        local foundValidServer = false
+        while not foundValidServer do
+            local serversToHopTo = {}
+            local foundJobIds = {}
+            local success, serversTable = pcall(function()
+                return GetServersFunction:InvokeServer()
+            end)
+            if success and serversTable then
+                for _, serverInfo in pairs(serversTable) do
+                    local osTime = serverInfo.ServerOsTime
+                    local serverJobId = serverInfo.JobId
+                    if not osTime or serverJobId == currentJobId or foundJobIds[serverJobId] 
+                        or attemptedJobIds[serverJobId] or IsVisitedServer(serverJobId) then 
+                        continue 
+                    end
+                    local uptimeSeconds = os.time() - osTime
+                    if uptimeSeconds >= 3600 then
+                        local baseTime = math.floor(uptimeSeconds / 3780) * 3780
+                        if baseTime > 0 then
+                            local minRange = baseTime - 60
+                            local maxRange = baseTime + 300
+                            if uptimeSeconds >= minRange and uptimeSeconds <= maxRange then
+                                table.insert(serversToHopTo, serverInfo)
+                                foundJobIds[serverJobId] = true
+                            end
+                        end
+                    end
+                end
+            end
+
+            if #serversToHopTo > 0 then
+                -- 🔽 어린 서버부터 시도
+                table.sort(serversToHopTo, function(a, b)
+                    return a.ServerOsTime > b.ServerOsTime -- 최근 생성(어린) 서버가 먼저
+                end)
+
+                print("🎯 조건 맞는 서버", #serversToHopTo, "개 발견 (파일 기반 중복 제외, 어린 서버 우선)")
+                for _, server in ipairs(serversToHopTo) do
+                    print("➡️ 서버 텔레포트 시도 JobId:", server.JobId, "서버 시작 시간:", server.ServerOsTime)
+                    attemptedJobIds[server.JobId] = true
+                    local tpSuccess, tpErr = pcall(function()
+                        TeleportService:TeleportToPlaceInstance(place, server.JobId)
+                    end)
+                    if tpSuccess then
+                        print("✅ 텔레포트 요청 성공 JobId:", server.JobId)
+                        print("🔄 새 서버 로딩 중... (성공 시 자동으로 파일에 저장됩니다)")
+                        foundValidServer = true
+                    else
+                        warn("❌ 텔레포트 실패 JobId:", server.JobId, tpErr)
+                    end
+                    task.wait(0.77)
+                end
+                if foundValidServer then
+                    print("🎉 현재 배치에서", #serversToHopTo, "개 서버 모두 시도 완료!")
+                else
+                    print("🔄 현재 배치 서버들 모두 실패, 새로운 서버 목록 요청중...")
+                    task.wait(0.77)
+                end
+            else
+                print("😢 조건 맞는 서버 없음 (또는 모두 방문함), 새로운 서버 목록 요청중...")
+                task.wait(0.77)
+            end
+        end
+    end
+    task.wait(0.17)
+end
