@@ -1,0 +1,89 @@
+local player = game.Players.LocalPlayer
+local toolName = "Gold Spear"
+
+-- 27초 대기
+wait(27)
+print("[Main] 27초 경과, 스크립트 시작")
+
+-- RemoteFunction / RemoteEvent 가져오기
+local inventoryRemote = game:GetService("ReplicatedStorage"):WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Functions"):WaitForChild("InventoryEq")
+local armamentEvent = game:GetService("ReplicatedStorage"):WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Events"):WaitForChild("Armament")
+
+-- Gold Spear 지급 함수
+local function giveTool(name)
+    if typeof(name) == "string" then
+        inventoryRemote:InvokeServer(name)
+        print("[giveTool] 지급:", name)
+    elseif typeof(name) == "Instance" and name:IsA("Tool") then
+        inventoryRemote:InvokeServer(name.Name)
+        print("[giveTool] 지급 (Tool 객체):", name.Name)
+    end
+end
+
+-- Armament 이벤트 실행 함수
+local function fireArmament()
+    armamentEvent:FireServer()
+    print("[fireArmament] Armament 이벤트 실행")
+end
+
+-- 캐릭터 체크 + 자동 지급 + 장착
+local function checkTools()
+    local backpackTool = player.Backpack:FindFirstChild(toolName)
+    local characterTool = player.Character and player.Character:FindFirstChild(toolName)
+
+    -- Gold Spear가 없으면 지급
+    if not backpackTool and not characterTool then
+        -- Sword 먼저 지급
+        local swordTool
+        for _, tool in pairs(player.Backpack:GetChildren()) do
+            if tool:IsA("Tool") and tool.ToolTip == "Sword" then
+                swordTool = tool
+                break
+            end
+        end
+        if swordTool then
+            giveTool(swordTool.Name)
+        end
+
+        -- Gold Spear 지급
+        giveTool(toolName)
+        return
+    end
+
+    -- 백팩에만 있으면 캐릭터로 장착
+    if backpackTool and player.Character and not characterTool then
+        backpackTool.Parent = player.Character
+        print("[checkTools] Backpack → Character 장착:", toolName)
+    end
+end
+
+-- 죽음 처리
+local function onCharacterDied()
+    print("[onCharacterDied] 캐릭터 죽음 감지됨")
+    task.delay(1, function()
+        checkTools()
+        fireArmament()
+    end)
+end
+
+-- 캐릭터 추가 시 이벤트 연결
+local function onCharacterAdded(character)
+    local humanoid = character:WaitForChild("Humanoid")
+    humanoid.Died:Connect(onCharacterDied)
+end
+
+player.CharacterAdded:Connect(onCharacterAdded)
+if player.Character then
+    onCharacterAdded(player.Character)
+end
+
+-- Armament 이벤트 즉시 실행 (27초 후 한 번)
+fireArmament()
+
+-- 0.5초마다 Gold Spear 및 자동 장착 체크
+spawn(function()
+    while true do
+        checkTools()
+        task.wait(0.5)
+    end
+end)
