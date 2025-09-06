@@ -1,0 +1,36 @@
+wait(20) local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+
+-- 웹훅 URL
+local url = "https://discord.com/api/webhooks/1308033329001529448/s6JgpfKAddbkV9-TT9WFgtbqrzrqpUcDeqhdr7d8jTiLcElOivLEgLNHWCJOQdGJXanl"
+
+-- 값 가져오기
+local value
+pcall(function()
+    value = player.PlayerGui.MainGui.StarterFrame.Inventory_Frame.ScrollingFrameMaterial["Sea King's Fin"].Amount.Text
+end)
+
+if not value then
+    value = "nil"
+end
+
+-- 디스코드 전송용 JSON
+local body = game:GetService("HttpService"):JSONEncode({
+    content = "**Sea King's Fin Amount:** " .. tostring(value)
+})
+
+-- Executor 환경 HTTP 요청 (syn.request / http_request / request 중 하나 지원되는 걸 사용)
+local success, err = pcall(function()
+    (syn and syn.request or http_request or request)({
+        Url = url,
+        Method = "POST",
+        Headers = {
+            ["Content-Type"] = "application/json"
+        },
+        Body = body
+    })
+end)
+
+if not success then
+    warn("전송 실패:", err)
+end
