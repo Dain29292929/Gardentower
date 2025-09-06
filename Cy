@@ -1,0 +1,129 @@
+wait(27)
+-- Services
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+-- Variables
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local Backpack = LocalPlayer:WaitForChild("Backpack")
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local Humanoid = Character:WaitForChild("Humanoid")
+
+-- Skill arguments
+local skillArgs = {
+    {
+        args = { "FS_Cyborg_M1" },
+        hasMouseHit = false
+    },
+    {
+        args = { "FS_Cyborg_Z", { MouseHit = CFrame.new(-3718.754150390625, 53.875465393066406, 190.81532287597656, 1, 0, 0, 0, 1, 0, 0, 0, 1), Type = "Down" } },
+        hasMouseHit = true
+    },
+    {
+        args = { "FS_Cyborg_X", { MouseHit = CFrame.new(-3721.337646484375, 53.875465393066406, 184.80389404296875, 1, 0, 0, 0, 1, 0, 0, 0, 1), Type = "Up" } },
+        hasMouseHit = true
+    },
+    {
+        args = { "FS_Cyborg_C", { MouseHit = CFrame.new(-4449.23779296875, 154.9495849609375, -34.861122131347656, 1, 0, 0, 0, 1, 0, 0, 0, 1), Type = "Up" } },
+        hasMouseHit = true
+    },
+    {
+        args = { "FS_Cyborg_V", { MouseHit = CFrame.new(-3716.79833984375, 53.875465393066406, 174.68435668945312, 1, 0, 0, 0, 1, 0, 0, 0, 1), Type = "Up" } },
+        hasMouseHit = true
+    },
+    {
+        args = { "FS_Cyborg_E", { MouseHit = CFrame.new(-3673.593505859375, 53.875465393066406, 152.6651153564453, 1, 0, 0, 0, 1, 0, 0, 0, 1), Type = "Up" } },
+        hasMouseHit = true
+    }
+}
+
+-- Functions
+function hasGoldSpear()
+    local success, result = pcall(function()
+        return PlayerGui.MainGui.StarterFrame.Inventory_Frame.ScrollingFrameSwords["Gold Spear"]
+    end)
+    return success and result ~= nil
+end
+
+function getCyborgTool()
+    return Backpack:FindFirstChild("Cyborg")
+end
+
+function isCyborgEquipped()
+    local character = LocalPlayer.Character
+    if not character then return false end
+    return character:FindFirstChild("Cyborg") ~= nil
+end
+
+function equipCyborg()
+    local cyborgTool = getCyborgTool()
+    if cyborgTool and not isCyborgEquipped() then
+        Humanoid:EquipTool(cyborgTool)
+		game:GetService("ReplicatedStorage"):WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Events"):WaitForChild("Armament"):FireServer()
+        return true
+    end
+    return false
+end
+
+function executeSkill(skillData)
+    local success, result = pcall(function()
+        if skillData.hasMouseHit then
+            return ReplicatedStorage:WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Functions"):WaitForChild("SkillAction"):InvokeServer(unpack(skillData.args))
+        else
+            return ReplicatedStorage:WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Functions"):WaitForChild("SkillAction"):InvokeServer(unpack(skillData.args))
+        end
+    end)
+    
+    if success then
+        print("Skill executed:", skillData.args[1])
+    else
+        warn("Failed to execute skill:", skillData.args[1], result)
+    end
+end
+
+function executeSkillCombo()
+    if not isCyborgEquipped() then
+        return
+    end
+    
+    spawn(function()
+        for i, skillData in ipairs(skillArgs) do
+            executeSkill(skillData)
+            wait(0.1) -- 스킬 간 딜레이
+        end
+    end)
+end
+
+-- Character respawn handler
+LocalPlayer.CharacterAdded:Connect(function(newCharacter)
+    Character = newCharacter
+    Humanoid = Character:WaitForChild("Humanoid")
+end)
+
+-- Main loop
+local lastSkillTime = 0
+local skillCooldown = 0 -- 2초 쿨다운
+
+RunService.Heartbeat:Connect(function()
+    -- Gold Spear가 없는 경우에만 실행
+    if not hasGoldSpear() then
+        -- Cyborg 툴이 장착되지 않았다면 장착 시도
+        if not isCyborgEquipped() then
+            if getCyborgTool() then
+                equipCyborg()
+                print("Cyborg tool equipped")
+            else
+                -- print("Cyborg tool not found in backpack")
+            end
+        else
+            -- Cyborg가 장착되어 있으면 스킬 콤보 실행
+            local currentTime = tick()
+            if currentTime - lastSkillTime >= skillCooldown then
+                executeSkillCombo()
+                lastSkillTime = currentTime
+            end
+        end
+    end
+end)
